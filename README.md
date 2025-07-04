@@ -12,7 +12,7 @@ Dibangun dengan framework CodeIgniter 4, aplikasi ini memberikan kemudahan dalam
 
 
 
-Aplikasi ini digunakan untuk mengelola peminjaman gedung, ruang, dan sarana kampus secara online.  
+Aplikasi ini digunakan untuk mengelola peminjaman gedung, ruang, dan sarana kampus secara online.
 
 Fitur yang tersedia:
 
@@ -28,9 +28,7 @@ Fitur yang tersedia:
 
 Developer
 
-Dibuat oleh: Syafira Star ✨ \&
+Dibuat oleh: Syafira Star ✨ \& Just Zahwa 🍵
 
 Untuk Ujian Akhir Semester (UAS) - Sistem Informasi Manajemen
-
-
 

@@ -5,36 +5,49 @@ namespace App\Controllers;
 use App\Models\PeminjamanModel;
 use App\Models\PeminjamanSaranaModel;
 use App\Models\SaranaModel;
+use Config\Database;
 
 class Laporan extends BaseController
 {
     public function index()
     {
+        $db = Database::connect(); // Pakai query builder
         $model = new PeminjamanModel();
         $saranaModel = new SaranaModel();
 
         $tanggalMulai = $this->request->getGet('tanggal_mulai');
         $tanggalAkhir = $this->request->getGet('tanggal_akhir');
-        $urut = $this->request->getGet('urut') ?? 'asc';
+        $urut = strtolower($this->request->getGet('urut'));
+            if (!in_array($urut, ['asc', 'desc'])) {
+                $urut = 'asc';
+            }
         $filterSarana = $this->request->getGet('sarana_id');
 
-        $query = $model
-        ->select('tb_peminjaman.*, tb_peminjaman.id as peminjaman_id') // ✅ pastikan ID aman
-        ->where('status', 'Diterima');
+        $builder = $db->table('tb_peminjaman')
+            ->select('tb_peminjaman.*, tb_peminjaman.id as peminjaman_id')
+            ->where('tb_peminjaman.status', 'Diterima');
 
-
+        // Filter tanggal
         if ($tanggalMulai && $tanggalAkhir) {
-            $query = $query->where('tanggal_peminjaman >=', $tanggalMulai)
-                           ->where('tanggal_peminjaman <=', $tanggalAkhir);
+            $builder->where('tanggal_peminjaman >=', $tanggalMulai)
+                    ->where('tanggal_peminjaman <=', $tanggalAkhir);
         }
+
+        // Filter sarana (kalau ada)
         if (!empty($filterSarana)) {
-            $query->join('tb_peminjaman_sarana', 'tb_peminjaman.id = tb_peminjaman_sarana.peminjaman_id')
-                ->where('tb_peminjaman_sarana.sarana_id', $filterSarana);
+            $builder->join('tb_peminjaman_sarana', 'tb_peminjaman.id = tb_peminjaman_sarana.peminjaman_id')
+                    ->where('tb_peminjaman_sarana.sarana_id', $filterSarana);
         }
 
-        $query->orderBy('tanggal_peminjaman', $urut);
+        // Tambahkan urutan dan group by
+        $builder->orderBy('tanggal_peminjaman', $urut);
+        $builder->groupBy('tb_peminjaman.id');
+        // echo $builder->getCompiledSelect();
+        // exit;
 
-        $peminjamanRows = $query->groupBy('tb_peminjaman.id')->findAll();
+        // Ambil data
+        $peminjamanRows = $builder->get()->getResultArray();
+
 
         $peminjaman = [];
         $peminjamanIds = [];
@@ -50,11 +63,14 @@ class Laporan extends BaseController
 
         // Ambil data peminjaman_sarana
         $peminjamanSaranaModel = new PeminjamanSaranaModel();
-        $saranaDetails = $peminjamanSaranaModel
-            ->select('tb_peminjaman_sarana.peminjaman_id, tb_sarana.nama, tb_peminjaman_sarana.jumlah')
-            ->join('tb_sarana', 'tb_sarana.id = tb_peminjaman_sarana.sarana_id')
-            ->whereIn('tb_peminjaman_sarana.peminjaman_id', $peminjamanIds)
-            ->findAll();
+        $saranaDetails = [];
+        if (!empty($peminjamanIds)) {
+            $saranaDetails = $peminjamanSaranaModel
+                ->select('tb_peminjaman_sarana.peminjaman_id, tb_sarana.nama, tb_peminjaman_sarana.jumlah')
+                ->join('tb_sarana', 'tb_sarana.id = tb_peminjaman_sarana.sarana_id')
+                ->whereIn('tb_peminjaman_sarana.peminjaman_id', $peminjamanIds)
+                ->findAll();
+        }
 
         // Kelompokkan sarana ke masing-masing peminjaman
         $saranaMap = [];
@@ -75,57 +91,38 @@ class Laporan extends BaseController
 
         }
 
-        $peminjaman = array_values($peminjaman); // tambahkan ini sebelum kirim ke view
+        $peminjaman = array_values($peminjaman); // reset index array
 
-        $data = [
-            'peminjaman'     => $peminjaman,
-            'tanggal_mulai'  => $tanggalMulai,
-            'tanggal_akhir'  => $tanggalAkhir,
-            'urut'           => $urut,
-            'daftarSarana'   => $saranaModel->findAll(),
-            'title'          => 'Laporan Penggunaan Fasilitas',
-        ];
-
-        // Total diterima
+        // Matriks totalan
+        $model = new PeminjamanModel();
         $jumlahDiterima = $model->where('status', 'Diterima')->countAllResults();
-
-        // Total ditolak
         $jumlahDitolak = $model->where('status', 'Ditolak')->countAllResults();
-
-        // Total yang diproses admin
         $jumlahDiproses = $jumlahDiterima + $jumlahDitolak;
 
-        // Persentase
         $persentaseDiterima = $jumlahDiproses > 0 ? round(($jumlahDiterima / $jumlahDiproses) * 100) : 0;
         $persentaseDitolak  = $jumlahDiproses > 0 ? round(($jumlahDitolak / $jumlahDiproses) * 100) : 0;
 
-        // Kirim ke view
-        $data['jumlahDiterima'] = $jumlahDiterima;
-        $data['jumlahDitolak'] = $jumlahDitolak;
-        $data['jumlahDiproses'] = $jumlahDiproses;
-        $data['persentaseDiterima'] = $persentaseDiterima;
-        $data['persentaseDitolak'] = $persentaseDitolak;
-        
-        // Hitung total peminjaman yang diterima
-        $totalPeminjaman = (new PeminjamanModel())
-            ->where('status', 'Diterima')
-            ->countAllResults();
+        // Analitik
+        $totalPeminjaman = $model->where('status', 'Diterima')->countAllResults();
+        $totalSarana = (new PeminjamanSaranaModel())->select('sarana_id')->distinct()->countAllResults();
+        $totalUnitKerja = (new PeminjamanModel())->select('instansi')->distinct()->countAllResults();
 
-        // Hitung total sarana yang dipinjam
-        $totalSarana = (new PeminjamanSaranaModel())
-            ->select('sarana_id')
-            ->distinct()
-            ->countAllResults();
-
-        // Hitung total unit kerja (dari instansi)
-        $totalUnitKerja = (new PeminjamanModel())
-            ->select('instansi')
-            ->distinct()
-            ->countAllResults();
-        
-        $data['totalPeminjaman'] = $totalPeminjaman;
-        $data['totalSarana'] = $totalSarana;
-        $data['totalUnitKerja'] = $totalUnitKerja;
+        $data = [
+            'peminjaman'         => $peminjaman,
+            'tanggal_mulai'      => $tanggalMulai,
+            'tanggal_akhir'      => $tanggalAkhir,
+            'urut'               => $urut,
+            'daftarSarana'       => $saranaModel->findAll(),
+            'title'              => 'Laporan Penggunaan Fasilitas',
+            'jumlahDiterima'     => $jumlahDiterima,
+            'jumlahDitolak'      => $jumlahDitolak,
+            'jumlahDiproses'     => $jumlahDiproses,
+            'persentaseDiterima' => $persentaseDiterima,
+            'persentaseDitolak'  => $persentaseDitolak,
+            'totalPeminjaman'    => $totalPeminjaman,
+            'totalSarana'        => $totalSarana,
+            'totalUnitKerja'     => $totalUnitKerja,
+        ];
 
         return view('laporan/index', $data);
     }
